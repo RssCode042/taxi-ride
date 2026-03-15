@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about the passenger",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "rating": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Ride": {
+      "title": "Ride History",
+      "description": "Details of a completed or active ride",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "passengerUid": { "type": "string" },
+        "driverId": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "destination": { "type": "string" },
+        "price": { "type": "number" },
+        "status": { "type": "string", "enum": ["searching", "accepted", "completed", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["passengerUid", "destination", "status"]
+    },
+    "SavedLocation": {
+      "title": "Saved Location",
+      "description": "User's frequently visited places",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userUid": { "type": "string" },
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "icon": { "type": "string" }
+      },
+      "required": ["userUid", "name", "address"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/rides/{rideId}": {
+      "schema": "Ride",
+      "description": "Ride records"
+    },
+    "/users/{uid}/savedLocations/{locationId}": {
+      "schema": "SavedLocation",
+      "description": "User's saved locations"
+    }
+  }
+}

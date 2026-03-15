@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
-import { MapPin, Search, Navigation, Clock, CreditCard, ChevronLeft, ChevronRight, User, Star, Phone, Map as MapIcon, Car, Settings, X, Home, Briefcase, Banknote, Check } from 'lucide-react';
+import { MapPin, Search, Navigation, Clock, CreditCard, ChevronLeft, ChevronRight, User, Star, Phone, Map as MapIcon, Car, Settings, X, Home, Briefcase, Banknote, Check, LogIn } from 'lucide-react';
 import Map from './components/Map';
 import BottomSheet from './components/BottomSheet';
 import Profile from './components/Profile';
 import { Location, RideState, RideOption, UserProfile, PaymentMethod, SavedLocation, Driver, RideReview } from './types';
 import { searchAddress, getRoute, reverseGeocode } from './utils/api';
+import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot, serverTimestamp, addDoc, getDocs, writeBatch, FirebaseUser, handleFirestoreError, OperationType } from './firebase';
 
 const RIDE_OPTIONS: RideOption[] = [
   { id: 'standard', name: 'Стандарт', price: 8.50, eta: 3, capacity: 4, image: 'https://raw.githubusercontent.com/rss042/taxi-assets/main/standard_3d.png', description: 'Достъпни ежедневни пътувания' },
@@ -15,6 +16,8 @@ const RIDE_OPTIONS: RideOption[] = [
 ];
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [state, setState] = useState<RideState>('IDLE');
   const [userLocation, setUserLocation] = useState<Location | null>(null);
   const [destination, setDestination] = useState<Location | null>(null);
@@ -47,28 +50,86 @@ export default function App() {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'terminal'>('cash');
   const [scheduleTime, setScheduleTime] = useState<'now' | 'later'>('now');
 
-  // Mock User Data
-  const [userProfile] = useState<UserProfile>({
-    name: 'Александър Димитров',
-    email: 'alex.dimitrov@example.com',
-    phone: '+359 88 123 4567',
-    rating: 4.92,
-    rideHistory: [
-      { id: '1', date: '12 Окт 2023', time: '14:30', destination: 'Летище София, Терминал 2', price: 24.50 },
-      { id: '2', date: '10 Окт 2023', time: '09:15', destination: 'Бизнес Парк София', price: 12.80 },
-      { id: '3', date: '05 Окт 2023', time: '19:45', destination: 'Paradise Center', price: 8.50 }
-    ]
-  });
-
+  // User Data from Firestore
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
   const [paymentMethods] = useState<PaymentMethod[]>([
     { id: '1', type: 'card', brand: 'Visa', last4: '4242', isDefault: true },
     { id: '2', type: 'cash', isDefault: false }
   ]);
 
-  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([
-    { id: 'home', name: 'Вкъщи', address: 'бул. Витоша 15, София', lat: 42.6950, lng: 23.3190, icon: 'home' },
-    { id: 'work', name: 'Работа', address: 'Бизнес Парк София, Сграда 4', lat: 42.6250, lng: 23.3740, icon: 'work' }
-  ]);
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      setIsAuthReady(true);
+      
+      if (firebaseUser) {
+        // Ensure user profile exists in Firestore
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        try {
+          const userSnap = await getDoc(userRef);
+          if (!userSnap.exists()) {
+            const newUser: UserProfile = {
+              name: firebaseUser.displayName || 'Потребител',
+              email: firebaseUser.email || '',
+              phone: firebaseUser.phoneNumber || '',
+              rating: 5.0,
+              rideHistory: []
+            };
+            await setDoc(userRef, {
+              ...newUser,
+              uid: firebaseUser.uid,
+              createdAt: serverTimestamp()
+            });
+            setUserProfile(newUser);
+          } else {
+            setUserProfile(userSnap.data() as UserProfile);
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+        }
+      } else {
+        setUserProfile(null);
+        setSavedLocations([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync Saved Locations
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'users', user.uid, 'savedLocations'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const locations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SavedLocation));
+      setSavedLocations(locations);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/savedLocations`);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // Sync Ride History
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'rides'), where('passengerUid', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserProfile(prev => prev ? { ...prev, rideHistory: history as any } : null);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'rides');
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Login error:', error);
+    }
+  };
 
   // Initialize Socket.IO connection
   useEffect(() => {
@@ -206,19 +267,39 @@ export default function App() {
     }
   };
 
-  const handleRequestRide = () => {
+  const handleRequestRide = async () => {
+    if (!user) return;
+    
     setState('SEARCHING_DRIVER');
-    socket?.emit('request_ride', { 
-      userLocation, 
-      destination, 
-      route,
-      preferences: {
-        nonSmoking: prefNonSmoking,
-        pets: prefPets,
-        luggage: prefLuggage,
-        terminal: paymentMethod === 'terminal'
-      }
-    });
+    
+    const rideData = {
+      passengerUid: user.uid,
+      destination: destination?.address || 'Неизвестна дестинация',
+      status: 'searching',
+      createdAt: serverTimestamp(),
+      date: new Date().toLocaleDateString('bg-BG', { day: '2-digit', month: 'short', year: 'numeric' }),
+      time: new Date().toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' }),
+      price: selectedRide?.price || 0
+    };
+
+    try {
+      const rideRef = await addDoc(collection(db, 'rides'), rideData);
+      
+      socket?.emit('request_ride', { 
+        rideId: rideRef.id,
+        userLocation, 
+        destination, 
+        route,
+        preferences: {
+          nonSmoking: prefNonSmoking,
+          pets: prefPets,
+          luggage: prefLuggage,
+          terminal: paymentMethod === 'terminal'
+        }
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'rides');
+    }
   };
 
   const resetApp = () => {
@@ -299,6 +380,38 @@ export default function App() {
     );
   };
 
+  if (!isAuthReady) {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!user || !userProfile) {
+    return (
+      <div className="fixed inset-0 bg-black flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-24 h-24 bg-blue-500/20 rounded-full flex items-center justify-center mb-8">
+          <Car className="w-12 h-12 text-blue-500" />
+        </div>
+        <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">TaxiRide</h1>
+        <p className="text-gray-400 mb-12 max-w-xs">Вашето надеждно такси в София. Влезте, за да започнете.</p>
+        
+        <button 
+          onClick={handleLogin}
+          className="w-full max-w-sm bg-white text-black font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-100 transition-all active:scale-95 shadow-xl"
+        >
+          <LogIn className="w-5 h-5" />
+          Влез с Google
+        </button>
+        
+        <div className="mt-12 text-[10px] text-gray-600 uppercase tracking-widest font-bold">
+          © 2024 TaxiRide Bulgaria
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden text-white font-sans">
       {/* Map Background */}
@@ -348,15 +461,30 @@ export default function App() {
           profile={userProfile}
           paymentMethods={paymentMethods}
           savedLocations={savedLocations}
-          onClearSavedLocations={() => setSavedLocations([])}
+          onClearSavedLocations={async () => {
+            if (!user) return;
+            try {
+              const q = query(collection(db, 'savedLocations'), where('uid', '==', user.uid));
+              const snapshot = await getDocs(q);
+              const batch = writeBatch(db);
+              snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+              await batch.commit();
+            } catch (error) {
+              handleFirestoreError(error, OperationType.DELETE, 'savedLocations');
+            }
+          }}
           onSetDestination={(loc) => {
             setShowProfile(false);
             handleSelectDestination(loc);
           }}
-          onToggleFavorite={(loc) => {
-            setSavedLocations(prev => 
-              prev.map(l => l.id === loc.id ? { ...l, isFavorite: !l.isFavorite } : l)
-            );
+          onToggleFavorite={async (loc) => {
+            if (!user) return;
+            try {
+              const docRef = doc(db, 'savedLocations', loc.id);
+              await updateDoc(docRef, { isFavorite: !loc.isFavorite });
+            } catch (error) {
+              handleFirestoreError(error, OperationType.UPDATE, 'savedLocations');
+            }
           }}
         />
       )}

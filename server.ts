@@ -92,27 +92,16 @@ async function startServer() {
         ...rideRequest
       });
 
-      // MOCK FALLBACK: If no real driver accepts in 5 seconds, trigger the simulation
-      // Remove this once you have the real Driver App connected
-      setTimeout(() => {
-        const ride = activeRides.get(rideId);
-        if (ride && ride.status === 'searching') {
-          console.log('No real driver accepted. Starting simulation...');
-          simulateRide(socket, rideRequest);
-        }
-      }, 5000);
+      console.log(`Searching for real drivers for ride ${rideId}...`);
     });
 
     socket.on('cancel_ride', () => {
-      // Cleanup intervals if any
-      if (socket.data.approachInterval) clearInterval(socket.data.approachInterval);
-      if (socket.data.rideInterval) clearInterval(socket.data.rideInterval);
-      
       // Notify driver if assigned
       const ride = Array.from(activeRides.values()).find(r => r.passengerSocketId === socket.id);
       if (ride && ride.driverSocketId) {
         io.to(ride.driverSocketId).emit('ride_cancelled_by_passenger');
-        drivers.get(ride.driverId).status = 'available';
+        const driver = drivers.get(ride.driverId);
+        if (driver) driver.status = 'available';
       }
       
       // Remove ride
@@ -128,72 +117,8 @@ async function startServer() {
           break;
         }
       }
-      if (socket.data.approachInterval) clearInterval(socket.data.approachInterval);
-      if (socket.data.rideInterval) clearInterval(socket.data.rideInterval);
     });
   });
-
-  // Helper for the simulation (keep it for testing)
-  function simulateRide(socket, { userLocation, destination, route, preferences }) {
-    const startLat = userLocation.lat + 0.005;
-    const startLng = userLocation.lng + 0.005;
-    
-    const mockDriver = {
-      id: 'sim_d1',
-      name: 'Симулатор (Тест)',
-      photo: 'https://i.pravatar.cc/150?img=11',
-      rating: 4.9,
-      carModel: 'Toyota Prius',
-      carPlate: 'CB 1234 AB',
-      carColor: 'Бял',
-      carYear: 2021,
-      preferences: preferences || { nonSmoking: true, pets: false, luggage: false }
-    };
-
-    socket.emit('driver_found', {
-      location: { lat: startLat, lng: startLng },
-      eta: 3,
-      driver: mockDriver
-    });
-
-    let approachStep = 0;
-    const approachTotal = 10;
-    const approachInterval = setInterval(() => {
-      approachStep++;
-      const fraction = approachStep / approachTotal;
-      const currentLat = startLat + (userLocation.lat - startLat) * fraction;
-      const currentLng = startLng + (userLocation.lng - startLng) * fraction;
-
-      socket.emit('driver_approach_update', {
-        location: { lat: currentLat, lng: currentLng },
-        eta: Math.ceil(3 * (1 - fraction))
-      });
-
-      if (approachStep >= approachTotal) {
-        clearInterval(approachInterval);
-        socket.emit('driver_arrived_at_user');
-
-        if (route && route.length > 0) {
-          let rideStep = 0;
-          const rideInterval = setInterval(() => {
-            rideStep += Math.max(1, Math.floor(route.length / 20));
-            if (rideStep >= route.length) {
-              rideStep = route.length - 1;
-              socket.emit('ride_update', { location: route[rideStep] });
-              clearInterval(rideInterval);
-              socket.emit('ride_arrived');
-            } else {
-              socket.emit('ride_update', { location: route[rideStep] });
-            }
-          }, 500);
-          socket.data.rideInterval = rideInterval;
-        } else {
-          socket.emit('ride_arrived');
-        }
-      }
-    }, 500);
-    socket.data.approachInterval = approachInterval;
-  }
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

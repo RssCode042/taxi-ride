@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required) - Firebase Auth UID
+    //   - name: string (optional)
+    //   - email: string (required) - User email
+    //   - phone: string (optional)
+    //   - rating: number (optional)
+    //   - createdAt: timestamp (optional)
+    //
+    // Collection: rides
+    // Document ID: {rideId}
+    // Fields:
+    //   - passengerUid: string (required) - UID of the passenger
+    //   - driverId: string (optional)
+    //   - destination: string (required)
+    //   - price: number (optional)
+    //   - status: string (required) - searching, accepted, completed, cancelled
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: users/{uid}/savedLocations
+    // Document ID: {locationId}
+    // Fields:
+    //   - userUid: string (required)
+    //   - name: string (required)
+    //   - address: string (required)
+    //   - lat: number (required)
+    //   - lng: number (required)
+    //   - icon: string (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+             (request.auth.token.email == "rss042code@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'phone', 'rating', 'createdAt', 'rideHistory']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             (data.name == null || (data.name is string && data.name.size() < 100)) &&
+             (data.phone == null || (data.phone is string && data.phone.size() < 20)) &&
+             (data.rideHistory == null || data.rideHistory is list);
+    }
+
+    function isValidRide(data) {
+      return hasRequiredFields(['passengerUid', 'destination', 'status', 'createdAt']) &&
+             data.passengerUid == request.auth.uid &&
+             data.status in ['searching', 'accepted', 'completed', 'cancelled'] &&
+             data.destination is string && data.destination.size() < 200;
+    }
+
+    function isValidLocation(data, userId) {
+      return hasRequiredFields(['userUid', 'name', 'address', 'lat', 'lng']) &&
+             data.userUid == userId &&
+             data.name is string && data.name.size() < 50 &&
+             data.address is string && data.address.size() < 200;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data);
+
+      match /savedLocations/{locationId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidLocation(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidLocation(request.resource.data, userId);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /rides/{rideId} {
+      allow read: if isAuthenticated() && (resource.data.passengerUid == request.auth.uid || request.auth.token.role == 'driver' || isAdmin());
+      allow create: if isAuthenticated() && isValidRide(request.resource.data);
+      allow update: if isAuthenticated() && (
+        (resource.data.passengerUid == request.auth.uid && isValidRide(request.resource.data)) ||
+        (request.auth.token.role == 'driver') ||
+        isAdmin()
+      );
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
