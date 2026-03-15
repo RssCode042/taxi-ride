@@ -50,7 +50,8 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-             (request.auth.token.email == "rss042code@gmail.com" && request.auth.token.email_verified == true);
+             request.auth.token.email == "rss042code@gmail.com" && 
+             request.auth.token.email_verified == true;
     }
 
     function isDocOwner() {
@@ -119,17 +120,22 @@ service cloud.firestore {
     }
 
     match /rides/{rideId} {
-      allow read: if isAuthenticated() && (
-        isAdmin() || 
-        resource.data.passengerUid == request.auth.uid || 
-        resource.data.driverId == request.auth.uid
-      );
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated() && (isAdmin() || isValidRide(request.resource.data));
       allow update: if isAuthenticated() && (
         isAdmin() ||
         resource.data.driverId == request.auth.uid ||
         (resource.data.passengerUid == request.auth.uid && isValidRide(request.resource.data))
       );
+    }
+
+    match /active_drivers/{driverId} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Managed by server
+    }
+
+    match /savedLocations/{locationId} {
+      allow read, write: if isAuthenticated() && (isAdmin() || resource.data.uid == request.auth.uid || request.resource.data.uid == request.auth.uid);
     }
 
     // Default deny
