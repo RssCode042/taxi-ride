@@ -1,10 +1,9 @@
 {
-  "projectId": "driver-wallet-95066",
-  "appId": "1:367170141285:web:31dfa19b7df1633c121a8c",
-  "apiKey": "AIzaSyAljOwq-fvsyOtEzHE81xwjih-AU5Bwkcg",
-  "authDomain": "driver-wallet-95066.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-2e28dcf2-0c18-4904-99e5-199c5517a156",
-  "storageBucket": "driver-wallet-95066.firebasestorage.app",
-  "messagingSenderId": "367170141285",
-  "measurementId": ""
+  "projectId": "fitness-bb1d9",
+  "appId": "1:70905260882:web:4edf071582800aa1c1288b",
+  "apiKey": "AIzaSyCoLqXdvar2-oYo8FMuZRPd4tYSPKwCxzA",
+  "authDomain": "fitness-bb1d9.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "fitness-bb1d9.firebasestorage.app",
+  "messagingSenderId": "70905260882"
 }
