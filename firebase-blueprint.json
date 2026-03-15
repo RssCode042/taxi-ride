@@ -2,7 +2,7 @@
   "entities": {
     "User": {
       "title": "User Profile",
-      "description": "Information about the passenger",
+      "description": "Information about the passenger or driver",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "Firebase Auth UID" },
@@ -10,6 +10,7 @@
         "email": { "type": "string", "format": "email" },
         "phone": { "type": "string" },
         "rating": { "type": "number" },
+        "role": { "type": "string", "enum": ["passenger", "driver", "admin"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email"]
@@ -22,12 +23,19 @@
         "id": { "type": "string" },
         "passengerUid": { "type": "string" },
         "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverRating": { "type": "number" },
+        "carModel": { "type": "string" },
+        "carPlate": { "type": "string" },
         "date": { "type": "string" },
         "time": { "type": "string" },
         "destination": { "type": "string" },
         "price": { "type": "number" },
-        "status": { "type": "string", "enum": ["searching", "accepted", "completed", "cancelled"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "status": { "type": "string", "enum": ["searching", "accepted", "completed", "cancelled", "arrived", "in_progress"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "cancelledAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["passengerUid", "destination", "status"]
     },

@@ -50,11 +50,11 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-             request.auth.token.get('email', '') == "rss042code@gmail.com";
+             (request.auth.token.email == "rss042code@gmail.com" && request.auth.token.email_verified == true);
     }
 
     function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.get('uid', '');
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
     }
 
     function isValidEmail(email) {
@@ -74,17 +74,18 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'email', 'phone', 'rating', 'createdAt', 'rideHistory']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'phone', 'rating', 'createdAt', 'rideHistory', 'role']) &&
              data.uid == request.auth.uid &&
              isValidEmail(data.email) &&
              (data.name == null || (data.name is string && data.name.size() < 100)) &&
              (data.phone == null || (data.phone is string && data.phone.size() < 20)) &&
-             (data.rideHistory == null || data.rideHistory is list);
+             (data.rideHistory == null || data.rideHistory is list) &&
+             (data.role == null || data.role in ['passenger', 'driver', 'admin']);
     }
 
     function isValidRide(data) {
       return hasRequiredFields(['passengerUid', 'destination', 'status', 'createdAt']) &&
-             hasOnlyAllowedFields(['passengerUid', 'destination', 'status', 'createdAt', 'date', 'time', 'price']) &&
+             hasOnlyAllowedFields(['passengerUid', 'destination', 'status', 'createdAt', 'date', 'time', 'price', 'driverId', 'driverName', 'driverRating', 'carModel', 'carPlate', 'acceptedAt', 'cancelledAt', 'completedAt']) &&
              data.passengerUid == request.auth.uid &&
              data.status in ['searching', 'accepted', 'completed', 'cancelled', 'arrived', 'in_progress'] &&
              data.destination is string && data.destination.size() < 500 &&
@@ -118,12 +119,16 @@ service cloud.firestore {
     }
 
     match /rides/{rideId} {
-      allow read: if isAuthenticated() && (isAdmin() || request.auth.token.get('role', '') == 'driver' || resource.data.get('passengerUid', '') == request.auth.uid);
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        resource.data.passengerUid == request.auth.uid || 
+        resource.data.driverId == request.auth.uid
+      );
       allow create: if isAuthenticated() && (isAdmin() || isValidRide(request.resource.data));
       allow update: if isAuthenticated() && (
         isAdmin() ||
-        (request.auth.token.get('role', '') == 'driver') ||
-        (resource.data.get('passengerUid', '') == request.auth.uid && isValidRide(request.resource.data))
+        resource.data.driverId == request.auth.uid ||
+        (resource.data.passengerUid == request.auth.uid && isValidRide(request.resource.data))
       );
     }
 
