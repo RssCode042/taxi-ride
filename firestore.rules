@@ -84,9 +84,13 @@ service cloud.firestore {
 
     function isValidRide(data) {
       return hasRequiredFields(['passengerUid', 'destination', 'status', 'createdAt']) &&
+             hasOnlyAllowedFields(['passengerUid', 'destination', 'status', 'createdAt', 'date', 'time', 'price']) &&
              data.passengerUid == request.auth.uid &&
-             data.status in ['searching', 'accepted', 'completed', 'cancelled'] &&
-             data.destination is string && data.destination.size() < 200;
+             data.status in ['searching', 'accepted', 'completed', 'cancelled', 'arrived', 'in_progress'] &&
+             data.destination is string && data.destination.size() < 500 &&
+             (data.price == null || data.price is number) &&
+             (data.date == null || data.date is string) &&
+             (data.time == null || data.time is string);
     }
 
     function isValidLocation(data, userId) {
@@ -115,7 +119,7 @@ service cloud.firestore {
 
     match /rides/{rideId} {
       allow read: if isAuthenticated() && (resource.data.passengerUid == request.auth.uid || request.auth.token.role == 'driver' || isAdmin());
-      allow create: if isAuthenticated() && isValidRide(request.resource.data);
+      allow create: if isAuthenticated() && (isValidRide(request.resource.data) || isAdmin());
       allow update: if isAuthenticated() && (
         (resource.data.passengerUid == request.auth.uid && isValidRide(request.resource.data)) ||
         (request.auth.token.role == 'driver') ||
