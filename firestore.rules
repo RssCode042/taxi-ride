@@ -50,11 +50,11 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-             (request.auth.token.email == "rss042code@gmail.com" && request.auth.token.email_verified == true);
+             request.auth.token.get('email', '') == "rss042code@gmail.com";
     }
 
     function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.uid;
+      return isAuthenticated() && request.auth.uid == resource.data.get('uid', '');
     }
 
     function isValidEmail(email) {
@@ -105,9 +105,9 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
       allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data);
+      allow update: if (isAdmin() || isOwner(userId)) && isValidUser(request.resource.data);
 
       match /savedLocations/{locationId} {
         allow read: if isOwner(userId) || isAdmin();
@@ -118,12 +118,12 @@ service cloud.firestore {
     }
 
     match /rides/{rideId} {
-      allow read: if isAuthenticated() && (resource.data.passengerUid == request.auth.uid || request.auth.token.role == 'driver' || isAdmin());
-      allow create: if isAuthenticated() && (isValidRide(request.resource.data) || isAdmin());
+      allow read: if isAuthenticated() && (isAdmin() || request.auth.token.get('role', '') == 'driver' || resource.data.get('passengerUid', '') == request.auth.uid);
+      allow create: if isAuthenticated() && (isAdmin() || isValidRide(request.resource.data));
       allow update: if isAuthenticated() && (
-        (resource.data.passengerUid == request.auth.uid && isValidRide(request.resource.data)) ||
-        (request.auth.token.role == 'driver') ||
-        isAdmin()
+        isAdmin() ||
+        (request.auth.token.get('role', '') == 'driver') ||
+        (resource.data.get('passengerUid', '') == request.auth.uid && isValidRide(request.resource.data))
       );
     }
 
