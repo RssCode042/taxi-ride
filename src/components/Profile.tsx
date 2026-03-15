@@ -25,9 +25,11 @@ interface ProfileProps {
   onClearSavedLocations: () => void;
   onSetDestination: (location: SavedLocation) => void;
   onToggleFavorite: (location: SavedLocation) => void;
+  appMode: 'passenger' | 'driver';
+  onSwitchMode: (mode: 'passenger' | 'driver') => void;
 }
 
-export default function Profile({ onClose, profile, paymentMethods, savedLocations, onClearSavedLocations, onSetDestination, onToggleFavorite }: ProfileProps) {
+export default function Profile({ onClose, profile, paymentMethods, savedLocations, onClearSavedLocations, onSetDestination, onToggleFavorite, appMode, onSwitchMode }: ProfileProps) {
   const [view, setView] = useState<'main' | 'support' | 'history'>('main');
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
@@ -315,6 +317,25 @@ export default function Profile({ onClose, profile, paymentMethods, savedLocatio
               <Star className="w-3 h-3 text-yellow-400 fill-current mr-1" />
               <span className="font-medium text-gray-300">{profile.rating}</span>
             </div>
+          </div>
+        </div>
+
+        {/* Mode Switcher */}
+        <div className="bg-gray-900/50 rounded-2xl p-4 shadow-sm border border-white/5">
+          <h3 className="font-bold text-base mb-3">Режим на работа</h3>
+          <div className="flex bg-gray-800/50 p-1 rounded-xl border border-white/5">
+            <button 
+              onClick={() => onSwitchMode('passenger')}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${appMode === 'passenger' ? 'bg-white text-black shadow-lg' : 'text-gray-400 hover:text-white'}`}
+            >
+              Пътник
+            </button>
+            <button 
+              onClick={() => onSwitchMode('driver')}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${appMode === 'driver' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-gray-400 hover:text-white'}`}
+            >
+              Шофьор
+            </button>
           </div>
         </div>
 

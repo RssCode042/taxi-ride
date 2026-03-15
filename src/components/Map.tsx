@@ -79,9 +79,10 @@ interface MapProps {
   onMapClick?: (lat: number, lng: number) => void;
   onMapMove?: (lat: number, lng: number) => void;
   isSelectingOnMap?: boolean;
+  appMode?: 'passenger' | 'driver';
 }
 
-export default function Map({ userLocation, destination, driverLocation, route, onMapClick, onMapMove, isSelectingOnMap }: MapProps) {
+export default function Map({ userLocation, destination, driverLocation, route, onMapClick, onMapMove, isSelectingOnMap, appMode = 'passenger' }: MapProps) {
   const defaultCenter: [number, number] = [42.6977, 23.3219]; // Sofia, Bulgaria
 
   return (
@@ -101,8 +102,8 @@ export default function Map({ userLocation, destination, driverLocation, route, 
         <MapEvents onMapClick={onMapClick} onMapMove={onMapMove} />
         
         {userLocation && (
-          <Marker position={[userLocation.lat, userLocation.lng]} icon={userIcon}>
-            <Popup>Вие сте тук</Popup>
+          <Marker position={[userLocation.lat, userLocation.lng]} icon={appMode === 'driver' ? carIcon : userIcon}>
+            <Popup>{appMode === 'driver' ? 'Вие (Шофьор)' : 'Вие сте тук'}</Popup>
           </Marker>
         )}
 

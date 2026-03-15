@@ -5,7 +5,8 @@ import { MapPin, Search, Navigation, Clock, CreditCard, ChevronLeft, ChevronRigh
 import Map from './components/Map';
 import BottomSheet from './components/BottomSheet';
 import Profile from './components/Profile';
-import { Location, RideState, RideOption, UserProfile, PaymentMethod, SavedLocation, Driver, RideReview } from './types';
+import DriverDashboard from './components/DriverDashboard';
+import { Location, RideState, RideOption, UserProfile, PaymentMethod, SavedLocation, Driver, RideReview, RideRequest } from './types';
 import { searchAddress, getRoute, reverseGeocode } from './utils/api';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot, serverTimestamp, addDoc, getDocs, writeBatch, FirebaseUser, handleFirestoreError, OperationType } from './firebase';
 
@@ -35,6 +36,11 @@ export default function App() {
   const [rideRating, setRideRating] = useState<number>(0);
   const [rideFeedback, setRideFeedback] = useState<string>('');
   const [reviews, setReviews] = useState<RideReview[]>([]);
+
+  const [appMode, setAppMode] = useState<'passenger' | 'driver'>('passenger');
+  const [isDriverOnline, setIsDriverOnline] = useState(false);
+  const [pendingRideRequests, setPendingRideRequests] = useState<RideRequest[]>([]);
+  const [activeDriverRide, setActiveDriverRide] = useState<RideRequest | null>(null);
 
   const [showProfile, setShowProfile] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -161,10 +167,28 @@ export default function App() {
       setState('ARRIVED');
     });
 
+    // --- DRIVER SOCKET EVENTS ---
+    newSocket.on('new_ride_request', (request: RideRequest) => {
+      setPendingRideRequests(prev => [...prev, request]);
+      // Play sound or notification if possible
+    });
+
+    newSocket.on('ride_cancelled_by_passenger', () => {
+      setActiveDriverRide(null);
+      alert('Пътникът отказа поръчката.');
+    });
+
     return () => {
       newSocket.close();
     };
   }, []);
+
+  // Identify user to socket server
+  useEffect(() => {
+    if (socket && user) {
+      socket.emit('identify', user.uid);
+    }
+  }, [socket, user]);
 
   // Get user location on mount
   useEffect(() => {
@@ -290,6 +314,9 @@ export default function App() {
         userLocation, 
         destination, 
         route,
+        passengerName: userProfile?.name || 'Потребител',
+        passengerRating: userProfile?.rating || 5.0,
+        price: selectedRide?.price || 0,
         preferences: {
           nonSmoking: prefNonSmoking,
           pets: prefPets,
@@ -329,6 +356,63 @@ export default function App() {
       console.log('Review submitted:', newReview);
     }
     resetApp();
+  };
+
+  const handleToggleDriverOnline = () => {
+    if (!user) return;
+    const nextState = !isDriverOnline;
+    setIsDriverOnline(nextState);
+    
+    if (nextState) {
+      socket?.emit('driver_online', {
+        id: user.uid,
+        name: userProfile?.name,
+        rating: userProfile?.rating,
+        location: userLocation
+      });
+    }
+  };
+
+  const handleAcceptRide = (request: RideRequest) => {
+    if (!user) return;
+    
+    setActiveDriverRide(request);
+    setPendingRideRequests(prev => prev.filter(r => r.rideId !== request.rideId));
+    
+    socket?.emit('accept_ride', {
+      rideId: request.rideId,
+      driverId: user.uid,
+      driver: {
+        id: user.uid,
+        name: userProfile?.name,
+        rating: userProfile?.rating,
+        carModel: 'Toyota Prius',
+        carPlate: 'CB 1234 AB'
+      },
+      location: userLocation,
+      eta: 5
+    });
+  };
+
+  const handleDeclineRide = (rideId: string) => {
+    setPendingRideRequests(prev => prev.filter(r => r.rideId !== rideId));
+  };
+
+  const handleCompleteRide = async () => {
+    if (!activeDriverRide) return;
+    
+    try {
+      const rideRef = doc(db, 'rides', activeDriverRide.rideId);
+      await updateDoc(rideRef, {
+        status: 'completed',
+        completedAt: serverTimestamp()
+      });
+      
+      setActiveDriverRide(null);
+      alert('Пътуването е завършено!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `rides/${activeDriverRide.rideId}`);
+    }
   };
 
   const DriverProfileDisplay = ({ driver }: { driver: Driver | null }) => {
@@ -414,21 +498,35 @@ export default function App() {
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden text-white font-sans">
-      {/* Map Background */}
+      {/* Map Background - Always present */}
       <div className="absolute inset-0 z-0">
         <Map 
           userLocation={userLocation} 
-          destination={destination} 
-          driverLocation={driverLocation}
-          route={route}
+          destination={appMode === 'driver' && activeDriverRide ? activeDriverRide.pickup : destination} 
+          driverLocation={appMode === 'passenger' ? driverLocation : null}
+          route={appMode === 'driver' && activeDriverRide ? null : route}
           onMapClick={handleMapClick}
           onMapMove={handleMapMove}
           isSelectingOnMap={state === 'SELECTING_ON_MAP'}
+          appMode={appMode}
         />
       </div>
 
-      {/* Top Bar */}
-      {state === 'IDLE' && (
+      {appMode === 'driver' ? (
+        <DriverDashboard 
+          isOnline={isDriverOnline}
+          onToggleOnline={handleToggleDriverOnline}
+          pendingRequests={pendingRideRequests}
+          onAcceptRide={handleAcceptRide}
+          onDeclineRide={handleDeclineRide}
+          activeRide={activeDriverRide}
+          onCompleteRide={handleCompleteRide}
+          driverLocation={userLocation}
+        />
+      ) : (
+        <>
+          {/* Top Bar */}
+          {state === 'IDLE' && (
         <div className="absolute top-0 left-0 right-0 z-[1000] p-3 pointer-events-none flex justify-between">
           <button 
             onClick={() => setShowProfile(true)}
@@ -461,6 +559,11 @@ export default function App() {
           profile={userProfile}
           paymentMethods={paymentMethods}
           savedLocations={savedLocations}
+          appMode={appMode}
+          onSwitchMode={(mode) => {
+            setAppMode(mode);
+            setShowProfile(false);
+          }}
           onClearSavedLocations={async () => {
             if (!user) return;
             try {
@@ -1023,6 +1126,8 @@ export default function App() {
             </p>
           </motion.div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

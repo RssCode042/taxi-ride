@@ -15,6 +15,23 @@ export type RideState =
   | 'RIDING'
   | 'ARRIVED';
 
+export type DriverState = 
+  | 'OFFLINE'
+  | 'ONLINE'
+  | 'BUSY'
+  | 'ON_RIDE';
+
+export type RideRequest = {
+  rideId: string;
+  passengerUid: string;
+  passengerName: string;
+  passengerRating: number;
+  pickup: Location;
+  destination: Location;
+  price: number;
+  rideOption: string;
+};
+
 export type RideOption = {
   id: string;
   name: string;

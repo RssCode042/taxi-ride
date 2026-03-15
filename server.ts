@@ -4,13 +4,30 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import admin from 'firebase-admin';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// In-memory state (for demo purposes, use Redis/DB for production)
-const drivers = new Map(); // driverId -> { socketId, location, status }
-const activeRides = new Map(); // rideId -> { passengerId, driverId, status }
+// Initialize Firebase Admin
+const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
+
+admin.initializeApp({
+  projectId: firebaseConfig.projectId,
+});
+
+const db = admin.firestore();
+if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') {
+  // If a specific database ID is provided, we use it. 
+  // Note: firebase-admin v11+ supports multiple databases.
+  // For simplicity, we assume the default or the one configured.
+}
+
+// In-memory mapping for transient socket data
+const userSockets = new Map(); // uid -> socketId
+const socketToUid = new Map(); // socketId -> uid
 
 async function startServer() {
   const app = express();
@@ -27,94 +44,173 @@ async function startServer() {
   io.on('connection', (socket) => {
     console.log('New connection:', socket.id);
 
-    // --- DRIVER LOGIC ---
-    socket.on('driver_online', (driverData) => {
-      drivers.set(driverData.id, {
-        socketId: socket.id,
-        location: driverData.location,
-        status: 'available',
-        ...driverData
-      });
-      socket.join('drivers');
-      console.log(`Driver ${driverData.id} is online`);
+    // --- AUTH / IDENTITY ---
+    socket.on('identify', (uid) => {
+      userSockets.set(uid, socket.id);
+      socketToUid.set(socket.id, uid);
+      console.log(`User ${uid} identified with socket ${socket.id}`);
     });
 
-    socket.on('driver_location_update', (data) => {
-      const driver = drivers.get(data.driverId);
-      if (driver) {
-        driver.location = data.location;
-        // If driver is on a ride, notify the passenger
-        const ride = Array.from(activeRides.values()).find(r => r.driverId === data.driverId);
-        if (ride) {
-          io.to(ride.passengerSocketId).emit('driver_location_sync', {
-            location: data.location,
-            eta: data.eta
-          });
-        }
+    // --- DRIVER LOGIC ---
+    socket.on('driver_online', async (driverData) => {
+      const uid = driverData.id;
+      userSockets.set(uid, socket.id);
+      socketToUid.set(socket.id, uid);
+
+      try {
+        await db.collection('active_drivers').doc(uid).set({
+          location: driverData.location,
+          status: 'available',
+          name: driverData.name,
+          rating: driverData.rating,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        socket.join('drivers');
+        console.log(`Driver ${uid} is online (persisted)`);
+      } catch (error) {
+        console.error('Error setting driver online:', error);
       }
     });
 
-    socket.on('accept_ride', (data) => {
-      const ride = activeRides.get(data.rideId);
-      if (ride && ride.status === 'searching') {
-        ride.status = 'accepted';
-        ride.driverId = data.driverId;
-        ride.driverSocketId = socket.id;
-        
-        drivers.get(data.driverId).status = 'busy';
-
-        // Notify passenger
-        io.to(ride.passengerSocketId).emit('driver_found', {
-          driver: data.driver,
+    socket.on('driver_location_update', async (data) => {
+      const uid = data.driverId;
+      try {
+        await db.collection('active_drivers').doc(uid).update({
           location: data.location,
-          eta: data.eta
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        
-        console.log(`Ride ${data.rideId} accepted by driver ${data.driverId}`);
+
+        // Find if this driver is on an active ride
+        const ridesSnapshot = await db.collection('rides')
+          .where('driverId', '==', uid)
+          .where('status', 'in', ['accepted', 'arrived', 'in_progress'])
+          .limit(1)
+          .get();
+
+        if (!ridesSnapshot.empty) {
+          const rideDoc = ridesSnapshot.docs[0];
+          const rideData = rideDoc.data();
+          const passengerSocketId = userSockets.get(rideData.passengerUid);
+          
+          if (passengerSocketId) {
+            io.to(passengerSocketId).emit('driver_location_sync', {
+              location: data.location,
+              eta: data.eta
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error updating driver location:', error);
+      }
+    });
+
+    socket.on('accept_ride', async (data) => {
+      const rideId = data.rideId;
+      const driverId = data.driverId;
+
+      try {
+        const rideRef = db.collection('rides').doc(rideId);
+        const rideDoc = await rideRef.get();
+
+        if (rideDoc.exists && rideDoc.data()?.status === 'searching') {
+          await rideRef.update({
+            status: 'accepted',
+            driverId: driverId,
+            driverName: data.driver.name,
+            driverRating: data.driver.rating,
+            carModel: data.driver.carModel,
+            carPlate: data.driver.carPlate,
+            acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+
+          await db.collection('active_drivers').doc(driverId).update({
+            status: 'busy'
+          });
+
+          const passengerUid = rideDoc.data()?.passengerUid;
+          const passengerSocketId = userSockets.get(passengerUid);
+
+          if (passengerSocketId) {
+            io.to(passengerSocketId).emit('driver_found', {
+              driver: data.driver,
+              location: data.location,
+              eta: data.eta
+            });
+          }
+          
+          console.log(`Ride ${rideId} accepted by driver ${driverId} (persisted)`);
+        }
+      } catch (error) {
+        console.error('Error accepting ride:', error);
       }
     });
 
     // --- PASSENGER LOGIC ---
-    socket.on('request_ride', (rideRequest) => {
-      const rideId = `ride_${Date.now()}`;
-      const newRide = {
-        id: rideId,
-        passengerSocketId: socket.id,
-        status: 'searching',
-        ...rideRequest
-      };
+    socket.on('request_ride', async (rideRequest) => {
+      const rideId = rideRequest.rideId;
       
-      activeRides.set(rideId, newRide);
-
+      // The client already created the ride in Firestore, but we can ensure it's tracked
+      // and notify drivers.
+      socket.join(`ride_${rideId}`);
+      
       // Notify all available drivers
       io.to('drivers').emit('new_ride_request', {
-        rideId,
         ...rideRequest
       });
 
-      console.log(`Searching for real drivers for ride ${rideId}...`);
+      console.log(`Broadcasting ride request ${rideId} to drivers...`);
     });
 
-    socket.on('cancel_ride', () => {
-      // Notify driver if assigned
-      const ride = Array.from(activeRides.values()).find(r => r.passengerSocketId === socket.id);
-      if (ride && ride.driverSocketId) {
-        io.to(ride.driverSocketId).emit('ride_cancelled_by_passenger');
-        const driver = drivers.get(ride.driverId);
-        if (driver) driver.status = 'available';
+    socket.on('cancel_ride', async () => {
+      const uid = socketToUid.get(socket.id);
+      if (!uid) return;
+
+      try {
+        // Find active ride for this passenger
+        const ridesSnapshot = await db.collection('rides')
+          .where('passengerUid', '==', uid)
+          .where('status', 'in', ['searching', 'accepted'])
+          .limit(1)
+          .get();
+
+        if (!ridesSnapshot.empty) {
+          const rideDoc = ridesSnapshot.docs[0];
+          const rideData = rideDoc.data();
+          
+          await rideDoc.ref.update({
+            status: 'cancelled',
+            cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+
+          if (rideData.driverId) {
+            const driverSocketId = userSockets.get(rideData.driverId);
+            if (driverSocketId) {
+              io.to(driverSocketId).emit('ride_cancelled_by_passenger');
+            }
+            await db.collection('active_drivers').doc(rideData.driverId).update({
+              status: 'available'
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error cancelling ride:', error);
       }
-      
-      // Remove ride
-      const rideEntry = Array.from(activeRides.entries()).find(([_, r]) => r.passengerSocketId === socket.id);
-      if (rideEntry) activeRides.delete(rideEntry[0]);
     });
 
-    socket.on('disconnect', () => {
-      // Cleanup driver
-      for (const [id, d] of drivers.entries()) {
-        if (d.socketId === socket.id) {
-          drivers.delete(id);
-          break;
+    socket.on('disconnect', async () => {
+      const uid = socketToUid.get(socket.id);
+      if (uid) {
+        userSockets.delete(uid);
+        socketToUid.delete(socket.id);
+        
+        // Optionally mark driver as offline in Firestore
+        try {
+          // We might want to keep them online for a short grace period, 
+          // but for this demo we'll remove them.
+          await db.collection('active_drivers').doc(uid).delete();
+          console.log(`Driver ${uid} disconnected and removed from active_drivers`);
+        } catch (error) {
+          // Ignore if not a driver
         }
       }
     });
