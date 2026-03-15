@@ -1,0 +1,7 @@
+{
+  "name": "TaxiRide",
+  "description": "A ride-hailing application prototype with geolocation and map routing.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
